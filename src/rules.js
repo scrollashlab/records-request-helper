@@ -81,7 +81,7 @@ export function fireRisk({ branch, separation, nameInService }, facts) {
     if (!overlaps) continue;
     const fully = separation.earliest >= from && separation.date < to;
     let affected = fully ? "likely" : "possible";
-    let note = `${BRANCHES[f.branch]} records for discharges from ${longDate(f.from)} to ${longDate(f.to)} were hit by the 1973 National Personnel Records Center fire (${f.loss} lost).`;
+    let note = `The 1973 fire at the National Personnel Records Center destroyed ${f.loss} of ${BRANCHES[f.branch]} records for discharges from ${longDate(f.from)} to ${longDate(f.to)}.`;
     if (f.surnameAfter) {
       const after = afterCutoff(nameInService, f.surnameAfter);
       if (after === false) return null;

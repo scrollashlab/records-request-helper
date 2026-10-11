@@ -2,11 +2,11 @@
   "name": "records-request-helper",
   "version": "1.0.0",
   "private": true,
-  "description": "Plan a request for a veteran's military personnel file, kept accurate by GitLab Duo agents that ship, monitor and correct it hands-off.",
+  "description": "Plan a request for a veteran's military personnel file. GitLab Duo flows keep the rules current after release.",
   "type": "module",
   "license": "MIT",
   "scripts": {
-    "test": "node --test test/",
+    "test": "node --test test/*.test.js",
     "lint": "node scripts/ci/lint.mjs",
     "build": "node scripts/build.mjs",
     "check": "npm run lint && npm test && node scripts/ci/a11y-check.mjs && node scripts/ci/config-check.mjs"
