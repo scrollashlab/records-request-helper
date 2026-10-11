@@ -1,0 +1,29 @@
+instructions:
+  - name: Records accuracy
+    fileFilters:
+      - "src/**/*.js"
+      - "config/facts.json"
+    instructions: |
+      1. Every rule must read its numbers and years from config/facts.json, not hard-code them.
+      2. A changed fact needs an updated lastChecked date, a new version and a matching mustContain phrase from an archives.gov page.
+      3. Check the 62-year archival boundary and the 1973 fire date ranges against the tests.
+  - name: Privacy
+    fileFilters:
+      - "public/**/*"
+      - "src/**/*"
+    instructions: |
+      1. Flag any network request, analytics, cookie, storage of form input or external font.
+      2. Nothing a visitor types may leave the browser.
+  - name: Accessibility and plain language
+    fileFilters:
+      - "public/**/*"
+    instructions: |
+      1. Every form control needs a visible label.
+      2. Keep user-facing sentences short and free of jargon; the audience includes elderly next of kin.
+  - name: Pipeline carbon
+    fileFilters:
+      - ".gitlab-ci.yml"
+      - "config/sci.json"
+    instructions: |
+      1. New jobs need rules:changes and an entry in config/sci.json baselines.
+      2. Point out any change that makes every pipeline run more jobs or longer jobs.

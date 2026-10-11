@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Military Records Request Helper</title>
+  <meta name="description" content="Plan a request for a veteran's military personnel file: who can ask, what it costs, whether the 1973 fire matters, and what to send.">
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <h1>Military Records Request Helper</h1>
+      <p>Plan a request for a veteran's Official Military Personnel File from the National Archives: who can ask, what it costs, whether the 1973 fire matters, and exactly what to send.</p>
+    </div>
+  </header>
+  <main class="wrap">
+    <form id="form" class="card">
+      <fieldset>
+        <legend>Who is asking?</legend>
+        <div id="relationship" class="choices"></div>
+        <label class="inline"><input type="checkbox" id="veteranDeceased"> The veteran has died</label>
+      </fieldset>
+      <div class="row">
+        <label for="branch">Branch of service
+          <select id="branch" required></select>
+        </label>
+        <label for="separation">Separation (discharge) date
+          <input id="separation" placeholder="1968, 1968-05 or 1968-05-14" required inputmode="numeric" maxlength="10">
+        </label>
+      </div>
+      <label for="nameInService">Name used in service <span class="hint">(optional, stays in your browser)</span>
+        <input id="nameInService" placeholder="Last, First Middle" maxlength="80" autocomplete="off">
+      </label>
+      <label class="inline"><input type="checkbox" id="knowsServiceNumber"> I know the service number</label>
+      <button type="submit">Plan my request</button>
+      <p class="hint">Nothing you enter leaves this page. There is no server and no tracking.</p>
+    </form>
+
+    <section id="out" hidden aria-live="polite">
+      <div class="card" id="summary"></div>
+      <div class="card" id="fire" hidden></div>
+      <div class="card"><h2>What to gather</h2><ul id="needs"></ul></div>
+      <div class="card"><h2>How to send it</h2><ul id="send"></ul></div>
+      <div class="card" id="letter-card" hidden>
+        <h2>Cover letter</h2>
+        <p class="hint">Print this with the SF-180, then sign it.</p>
+        <pre id="letter"></pre>
+        <button type="button" id="copy">Copy letter</button>
+      </div>
+    </section>
+    <p id="errors" class="error" hidden></p>
+  </main>
+  <footer class="wrap">
+    <p id="sources"></p>
+    <p class="hint">This tool explains public National Archives guidance. It is not legal advice and is not affiliated with the National Archives. <span id="build"></span></p>
+  </footer>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,322 @@
+# Records Request Helper: post-code lifecycle on GitLab.
+#
+# Stages map to the DevSecOps lifecycle:
+#   verify    lint, unit tests, accessibility
+#   secure    SAST and secret detection (only when code changes)
+#   configure runtime flag and facts validation
+#   govern    repository policy (MIT, DCO, issue link, sourced facts) and security gate
+#   package   build the site and publish it to the package registry
+#   deploy    GitLab Pages: review app per merge request, production on main
+#   monitor   smoke test of the live site; scheduled source-drift check of the National Archives pages
+#   release   tagged release with notes when the version changes
+#   report    Software Carbon Intensity (SCI) for the pipeline
+#
+# Plan and create happen in GitLab Duo flows (.gitlab/duo/flows/): an issue becomes
+# a merge request, the pipeline result is reviewed and merged, failures are diagnosed
+# and production problems become new issues. See docs/flows.md.
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_PIPELINE_SOURCE == "web"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  auto_cancel:
+    on_new_commit: interruptible
+
+stages: [verify, secure, configure, govern, package, deploy, monitor, release, report]
+
+default:
+  image: node:22-alpine
+  interruptible: true
+
+variables:
+  SAST_EXCLUDED_PATHS: "test, dist, reports, metrics"
+  SECURE_LOG_LEVEL: "warn"
+
+include:
+  - template: Jobs/SAST.gitlab-ci.yml
+  - template: Jobs/Secret-Detection.gitlab-ci.yml
+
+# Jobs run only when files they check have changed. Every skipped job is
+# counted as saved carbon by the sci job.
+.code-changes: &code-changes
+  - src/**/*
+  - public/**/*
+  - scripts/**/*
+  - test/**/*
+  - config/**/*
+  - package.json
+  - .gitlab-ci.yml
+
+.on-change:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes: *code-changes
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      changes: *code-changes
+    - if: $CI_PIPELINE_SOURCE == "web"
+
+.timed:
+  after_script:
+    - node scripts/ci/record-job.mjs
+
+# ---------- verify ----------
+lint:
+  stage: verify
+  extends: [.on-change, .timed]
+  script:
+    - node scripts/ci/lint.mjs
+  artifacts:
+    paths: [metrics/]
+    expire_in: 1 week
+
+test:
+  stage: verify
+  extends: [.on-change, .timed]
+  script:
+    - mkdir -p reports
+    - node --test --test-reporter=spec --test-reporter=junit --test-reporter-destination=stdout --test-reporter-destination=reports/junit.xml test/
+  artifacts:
+    when: always
+    paths: [metrics/, reports/junit.xml]
+    reports:
+      junit: reports/junit.xml
+    expire_in: 1 week
+
+a11y:
+  stage: verify
+  extends: [.on-change, .timed]
+  script:
+    - node scripts/ci/a11y-check.mjs
+  artifacts:
+    paths: [metrics/]
+    expire_in: 1 week
+
+# ---------- secure ----------
+semgrep-sast:
+  stage: secure
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes: [src/**/*, public/**/*, scripts/**/*]
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      changes: [src/**/*, public/**/*, scripts/**/*]
+  artifacts:
+    paths: [gl-sast-report.json]
+    reports:
+      sast: gl-sast-report.json
+
+secret_detection:
+  stage: secure
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  artifacts:
+    paths: [gl-secret-detection-report.json]
+    reports:
+      secret_detection: gl-secret-detection-report.json
+
+# ---------- configure ----------
+config-check:
+  stage: configure
+  extends: [.on-change, .timed]
+  script:
+    - node scripts/ci/config-check.mjs
+  artifacts:
+    paths: [metrics/]
+    expire_in: 1 week
+
+# ---------- govern ----------
+policy-check:
+  stage: govern
+  extends: [.timed]
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
+    - when: on_success
+  variables:
+    GIT_DEPTH: "0"
+  before_script:
+    - apk add --no-cache git > /dev/null
+  script:
+    - node scripts/ci/policy-check.mjs
+  artifacts:
+    when: always
+    paths: [metrics/, reports/policy.json]
+    expire_in: 1 month
+
+security-gate:
+  stage: govern
+  extends: [.timed]
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
+    - when: on_success
+  needs:
+    - job: semgrep-sast
+      optional: true
+    - job: secret_detection
+      optional: true
+  script:
+    - node scripts/ci/security-gate.mjs
+  artifacts:
+    when: always
+    paths: [metrics/, reports/security-gate.json]
+    expire_in: 1 month
+
+# ---------- package ----------
+build:
+  stage: package
+  extends: [.on-change, .timed]
+  script:
+    - node scripts/build.mjs
+    - echo "VERSION=$(node -p "require('./package.json').version")" > build.env
+  artifacts:
+    paths: [dist/, metrics/]
+    reports:
+      dotenv: build.env
+    expire_in: 1 week
+
+package:
+  stage: package
+  extends: [.timed]
+  needs: [build]
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"
+      changes: *code-changes
+  script:
+    - apk add --no-cache curl > /dev/null
+    - tar -czf site.tar.gz -C dist .
+    - 'curl --fail --silent --show-error --header "JOB-TOKEN: $CI_JOB_TOKEN" --upload-file site.tar.gz "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/records-request-helper/$VERSION-$CI_PIPELINE_IID/site.tar.gz"'
+    - echo "Published records-request-helper $VERSION-$CI_PIPELINE_IID to the package registry."
+  artifacts:
+    paths: [metrics/]
+    expire_in: 1 week
+
+# ---------- deploy ----------
+# Review app: the built site, served from this job's artifacts on GitLab Pages.
+review-app:
+  stage: deploy
+  extends: [.timed]
+  needs: [build, policy-check, security-gate]
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes: *code-changes
+  script:
+    - SITE_URL="https://${CI_PROJECT_ROOT_NAMESPACE}.${CI_PAGES_DOMAIN}/-/${CI_PROJECT_PATH#*/}/-/jobs/${CI_JOB_ID}/artifacts/dist"
+    - echo "SITE_URL=$SITE_URL" > deploy.env
+    - echo "REVIEW_URL=$SITE_URL/index.html" >> deploy.env
+    - echo "Review app at $SITE_URL/index.html"
+  environment:
+    name: review/mr-$CI_MERGE_REQUEST_IID
+    url: $REVIEW_URL
+    auto_stop_in: 1 week
+  artifacts:
+    paths: [dist/, metrics/]
+    reports:
+      dotenv: deploy.env
+    expire_in: 1 week
+
+# Production: GitLab Pages.
+pages:
+  stage: deploy
+  extends: [.timed]
+  needs: [build, policy-check, security-gate]
+  interruptible: false
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"
+      changes: *code-changes
+  script:
+    - rm -rf public && cp -r dist public
+  environment:
+    name: production
+    url: $CI_PAGES_URL
+  artifacts:
+    paths: [public/, metrics/]
+
+# ---------- monitor ----------
+smoke-review:
+  stage: monitor
+  extends: [.timed]
+  needs: [review-app]
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes: *code-changes
+  script:
+    - node scripts/ci/smoke.mjs
+  artifacts:
+    paths: [metrics/]
+
+smoke:
+  stage: monitor
+  extends: [.timed]
+  interruptible: false
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      changes: *code-changes
+  variables:
+    SITE_URL: $CI_PAGES_URL
+  script:
+    - node scripts/ci/smoke.mjs
+  artifacts:
+    paths: [metrics/]
+
+source-drift:
+  stage: monitor
+  extends: [.timed]
+  interruptible: false
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes: [config/facts.json]
+  script:
+    - node scripts/ci/source-drift.mjs
+  artifacts:
+    when: always
+    paths: [metrics/, reports/source-drift.json]
+    expire_in: 1 month
+
+# ---------- release ----------
+release:
+  stage: release
+  image: registry.gitlab.com/gitlab-org/cli:latest
+  needs: [build, pages, smoke]
+  interruptible: false
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"
+      changes: [package.json]
+  script:
+    - echo "Releasing v$VERSION"
+  release:
+    tag_name: v$VERSION
+    name: Records Request Helper v$VERSION
+    description: CHANGELOG.md
+    ref: $CI_COMMIT_SHA
+    assets:
+      links:
+        - name: Live site
+          url: $CI_PAGES_URL
+        - name: Site package
+          url: $CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/records-request-helper/$VERSION-$CI_PIPELINE_IID/site.tar.gz
+
+# ---------- report ----------
+sci:
+  stage: report
+  interruptible: false
+  rules:
+    - when: always
+  script:
+    - node scripts/ci/sci.mjs
+  artifacts:
+    when: always
+    paths: [reports/sci.json]
+    reports:
+      metrics: reports/metrics.txt
+    expire_in: 3 months

@@ -1,0 +1,146 @@
+# Issue-to-MR: turns a new issue into a tested, signed-off merge request.
+# Triggers: Work item (Created), Mention, Assign.
+version: "v1"
+environment: ambient
+coding_environment: full
+components:
+  - name: "scope_check"
+    type: AgentComponent
+    prompt_id: "scope_check_prompt"
+    inputs:
+      - from: "context:goal"
+        as: "goal"
+      - from: "context:project_id"
+        as: "project_id"
+    toolset:
+      - "get_issue"
+      - "list_issues"
+      - "create_issue_note"
+    ui_log_events:
+      - "on_agent_final_answer"
+      - "on_tool_execution_failed"
+  - name: "builder"
+    type: AgentComponent
+    prompt_id: "builder_prompt"
+    inputs:
+      - from: "context:goal"
+        as: "goal"
+      - from: "context:project_id"
+        as: "project_id"
+      - from: "context:scope_check.final_answer"
+        as: "scope"
+      - from: "context:inputs.agent_platform_standard_context.primary_branch"
+        as: "primary_branch"
+      - from: "context:inputs.workspace_agent_skills"
+        as: "workspace_agent_skills"
+        optional: true
+    toolset:
+      - "get_issue"
+      - "read_file"
+      - "list_dir"
+      - "find_files"
+      - "grep"
+      - "edit_file"
+      - "create_file_with_contents"
+      - "run_command"
+      - "create_issue_note"
+    ui_log_events:
+      - "on_agent_final_answer"
+      - "on_tool_execution_success"
+      - "on_tool_execution_failed"
+prompts:
+  - prompt_id: "scope_check_prompt"
+    name: "Issue scope check"
+    unit_primitives: []
+    prompt_template:
+      system: |
+        You triage issues for Records Request Helper, a static web app that helps veterans and
+        families request military personnel records from the National Archives.
+
+        Read the issue named in the goal. The goal is either an issue IID, or a comment followed by
+        "Context: {Issue IID: N}".
+
+        Decide whether an agent can safely implement it without a human:
+        - In scope: wording or layout fixes, accessibility fixes, new or corrected facts from an
+          archives.gov page, rule changes that NARA publishes, bugs with clear steps, CI tuning
+          that lowers pipeline minutes.
+        - Out of scope: anything that collects, stores or sends visitor data; legal advice; changes
+          to .gitlab-ci.yml security jobs or .gitlab/duo; vague requests with no clear outcome; issues
+          labeled "needs-human".
+        - Already handled: an open merge request already says "Closes #N" for this issue.
+
+        If out of scope or already handled, post one short note on the issue saying why and what a
+        person would need to add, then your final answer is exactly: decline
+
+        If in scope, your final answer is exactly: build
+        followed by a new line and a three-to-six line plan naming the files you expect to change.
+        No further steps are needed after that.
+      user: |
+        Project ID: {{ project_id }}
+        Goal: {{ goal }}
+      placeholder: history
+    params:
+      timeout: 180
+  - prompt_id: "builder_prompt"
+    name: "Issue builder"
+    unit_primitives: []
+    prompt_template:
+      system: |
+        You implement one issue in Records Request Helper and open a merge request for it.
+        Follow AGENTS.md in the repository root. Load the records-rules skill for any change to
+        src/rules.js or config/facts.json, and the carbon-budget skill for any CI change.
+
+        Steps:
+        1. Read the issue and AGENTS.md.
+        2. Create a branch from the primary branch named duo/issue-N-short-slug.
+        3. Make the smallest change that resolves the issue. Add or update tests in test/.
+        4. Run "npm test" and "npm run check" with run_command. Fix failures until both pass.
+           If they still fail after three attempts, post a note on the issue with the failing
+           output, add the label needs-human with "glab issue update N --label needs-human",
+           and stop.
+        5. Commit with "git commit -s" so the commit carries a Signed-off-by line. Use a
+           conventional message such as "fix(rules): correct Air Force fire range".
+        6. Push the branch and open the merge request with glab:
+           glab mr create --source-branch BRANCH --target-branch PRIMARY --title "TITLE"
+             --description "DESCRIPTION" --label auto-merge --remove-source-branch --yes
+           The description must start with "Closes #N", then list what changed, how it was
+           tested, and the expected effect on pipeline minutes.
+        7. Post a note on the issue linking the merge request.
+
+        Never change files under .gitlab/duo, never weaken a test, never add dependencies, and
+        never add code that sends visitor input off the device.
+
+        When the merge request is open, your final answer is its URL. No further steps are
+        needed after that.
+      user: |
+        Project ID: {{ project_id }}
+        Primary branch: {{ primary_branch }}
+        Goal: {{ goal }}
+        Triage plan: {{ scope }}
+        Available skills: {{ workspace_agent_skills }}
+      placeholder: history
+    params:
+      timeout: 900
+routers:
+  - from: "scope_check"
+    condition:
+      input: "context:scope_check.final_answer"
+      routes:
+        "decline": "end"
+        "default_route": "builder"
+  - from: "builder"
+    to: "end"
+flow:
+  entry_point: "scope_check"
+  inputs:
+    - category: agent_platform_standard_context
+      input_schema:
+        primary_branch:
+          type: string
+          description: The default branch of the repository
+        workload_branch:
+          type: string
+          description: Git ref used by the workload runner
+        session_owner_id:
+          type: string
+          description: ID of the user who started the flow

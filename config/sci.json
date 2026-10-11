@@ -1,0 +1,77 @@
+{
+  "method": "Green Software Foundation SCI (ISO/IEC 21031:2024): SCI = ((E * I) + M) per R",
+  "functionalUnit": "one pipeline run (R = 1); reported per merge request and per production deploy",
+  "runner": {
+    "name": "GitLab-hosted Linux small runner",
+    "vcpu": 2,
+    "memoryGb": 8,
+    "platformVcpu": 32
+  },
+  "cpuWattsPerVcpu": {
+    "min": 0.71,
+    "max": 4.26,
+    "utilization": 0.5,
+    "source": "Cloud Carbon Footprint methodology, GCP medians"
+  },
+  "memoryKwhPerGbHour": 0.000392,
+  "pue": 1.1,
+  "gridGramsPerKwh": {
+    "value": 576,
+    "region": "us-east1",
+    "source": "Google Cloud region carbon data (cloud.google.com/sustainability/region-carbon)"
+  },
+  "embodied": {
+    "serverKgCo2e": 1000,
+    "lifespanYears": 4,
+    "source": "Cloud Carbon Footprint embodied-emissions baseline"
+  },
+  "baselineJobMinutes": {
+    "_note": "Minutes per job if the pipeline ran every job for its type. Skipped jobs count as carbon saved.",
+    "merge_request_event": {
+      "lint": 0.6,
+      "test": 0.8,
+      "a11y": 0.5,
+      "config-check": 0.4,
+      "policy-check": 0.5,
+      "security-gate": 0.4,
+      "build": 0.5,
+      "semgrep-sast": 2.5,
+      "secret_detection": 1.5,
+      "review-app": 0.5,
+      "smoke-review": 0.4,
+      "source-drift": 0.5
+    },
+    "push": {
+      "lint": 0.6,
+      "test": 0.8,
+      "a11y": 0.5,
+      "config-check": 0.4,
+      "policy-check": 0.5,
+      "security-gate": 0.4,
+      "build": 0.5,
+      "semgrep-sast": 2.5,
+      "secret_detection": 1.5,
+      "package": 0.6,
+      "pages": 0.7,
+      "smoke": 0.4
+    },
+    "schedule": {
+      "smoke": 0.4,
+      "source-drift": 0.5
+    },
+    "web": {
+      "lint": 0.6,
+      "test": 0.8,
+      "a11y": 0.5,
+      "config-check": 0.4,
+      "policy-check": 0.5,
+      "security-gate": 0.4,
+      "build": 0.5,
+      "semgrep-sast": 2.5,
+      "secret_detection": 1.5,
+      "package": 0.6,
+      "pages": 0.7,
+      "smoke": 0.4
+    }
+  }
+}

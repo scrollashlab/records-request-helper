@@ -1,0 +1,8 @@
+node_modules/
+dist/
+public-deploy/
+reports/
+metrics/
+*.log
+.env
+.DS_Store

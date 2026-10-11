@@ -1,0 +1,265 @@
+# Pipeline Medic: acts on every finished pipeline.
+#   merge request pipeline passed   -> gatekeeper reviews, reports carbon and merges
+#   merge request pipeline failed   -> fixer diagnoses and pushes a fix (two attempts at most)
+#   main pipeline passed            -> reporter posts the release summary on the closed issue
+#   main or scheduled run failed    -> incident agent opens an issue, which starts Issue-to-MR
+# Trigger: Pipeline events (Passed, Failed).
+version: "v1"
+environment: ambient
+coding_environment: full
+components:
+  - name: "triage"
+    type: AgentComponent
+    prompt_id: "triage_prompt"
+    inputs:
+      - from: "context:goal"
+        as: "goal"
+    toolset: []
+    ui_log_events:
+      - "on_agent_final_answer"
+  - name: "gatekeeper"
+    type: AgentComponent
+    prompt_id: "gatekeeper_prompt"
+    inputs:
+      - from: "context:goal"
+        as: "goal"
+      - from: "context:project_id"
+        as: "project_id"
+    toolset:
+      - "get_merge_request"
+      - "gitlab_api_get"
+      - "read_file"
+      - "create_merge_request_note"
+      - "run_command"
+    ui_log_events:
+      - "on_agent_final_answer"
+      - "on_tool_execution_success"
+      - "on_tool_execution_failed"
+  - name: "fixer"
+    type: AgentComponent
+    prompt_id: "fixer_prompt"
+    inputs:
+      - from: "context:goal"
+        as: "goal"
+      - from: "context:project_id"
+        as: "project_id"
+      - from: "context:inputs.workspace_agent_skills"
+        as: "workspace_agent_skills"
+        optional: true
+    toolset:
+      - "get_merge_request"
+      - "gitlab_api_get"
+      - "read_file"
+      - "list_dir"
+      - "find_files"
+      - "grep"
+      - "edit_file"
+      - "run_command"
+      - "create_merge_request_note"
+    ui_log_events:
+      - "on_agent_final_answer"
+      - "on_tool_execution_success"
+      - "on_tool_execution_failed"
+  - name: "reporter"
+    type: AgentComponent
+    prompt_id: "reporter_prompt"
+    inputs:
+      - from: "context:goal"
+        as: "goal"
+      - from: "context:project_id"
+        as: "project_id"
+    toolset:
+      - "gitlab_api_get"
+      - "get_issue"
+      - "create_issue_note"
+    ui_log_events:
+      - "on_agent_final_answer"
+      - "on_tool_execution_failed"
+  - name: "incident"
+    type: AgentComponent
+    prompt_id: "incident_prompt"
+    inputs:
+      - from: "context:goal"
+        as: "goal"
+      - from: "context:project_id"
+        as: "project_id"
+    toolset:
+      - "gitlab_api_get"
+      - "list_issues"
+      - "create_issue_note"
+      - "run_command"
+    ui_log_events:
+      - "on_agent_final_answer"
+      - "on_tool_execution_failed"
+prompts:
+  - prompt_id: "triage_prompt"
+    name: "Pipeline triage"
+    unit_primitives: []
+    prompt_template:
+      system: |
+        You read one GitLab pipeline event webhook payload and choose what happens next.
+        Look at object_attributes.status, object_attributes.source, object_attributes.ref,
+        the merge_request object, and the project's default branch.
+
+        Answer with exactly one lowercase word and nothing else:
+        - review: status is success and the pipeline belongs to a merge request.
+        - fix: status is failed and the pipeline belongs to a merge request.
+        - report: status is success, source is push, and ref is the default branch.
+        - incident: status is failed and the pipeline ran on the default branch (push, schedule or web).
+        - ignore: anything else, including successful scheduled pipelines.
+
+        Your final answer is that single word. No further steps are needed after that.
+      user: |
+        Pipeline event: {{ goal }}
+      placeholder: history
+    params:
+      timeout: 60
+  - prompt_id: "gatekeeper_prompt"
+    name: "Merge gatekeeper"
+    unit_primitives: []
+    prompt_template:
+      system: |
+        You are the last gate before production for Records Request Helper. The merge request
+        pipeline in the payload passed. Every hard gate (tests, accessibility, policy, SAST, secret
+        detection, security gate, review app smoke test) is a pipeline job, so a passed pipeline
+        means those gates are green. Your job is the judgment the pipeline cannot make.
+
+        1. Read the merge request. Only merge it if it carries the label auto-merge, is not a
+           draft, has no unresolved threads, and its description contains "Closes #".
+           Otherwise post nothing and finish.
+        2. Read the diff with gitlab_api_get on
+           projects/PROJECT_ID/merge_requests/IID/diffs. Check it against AGENTS.md and
+           .gitlab/duo/mr-review-instructions.yaml: facts sourced from archives.gov, no visitor
+           data leaving the browser, plain language, tests updated with behavior.
+        3. Read the carbon report with gitlab_api_get on
+           projects/PROJECT_ID/jobs/artifacts/SOURCE_BRANCH/raw/reports/sci.json?job=sci
+        4. If you find a real problem, post a merge request note that names the file, the line
+           and the fix, remove the auto-merge label with
+           "glab mr update IID --unlabel auto-merge", and finish.
+        5. Otherwise post one note titled "Gatekeeper: approved" with: what changed in two
+           sentences, the review app link, gates passed, and the carbon line
+           "This pipeline: X gCO2e (SCI), Y% below a run-everything pipeline; skipped: ...".
+           Then merge with "glab mr merge IID --remove-source-branch --yes".
+
+        When you have merged or stopped, your final answer is one line saying which and why.
+        No further steps are needed after that.
+      user: |
+        Project ID: {{ project_id }}
+        Pipeline event: {{ goal }}
+      placeholder: history
+    params:
+      timeout: 600
+  - prompt_id: "fixer_prompt"
+    name: "Pipeline fixer"
+    unit_primitives: []
+    prompt_template:
+      system: |
+        A merge request pipeline for Records Request Helper failed. Diagnose and fix it.
+
+        1. Read the merge request. If it lacks the label auto-merge, post nothing and finish.
+           If it already has two or more commits whose message starts with "fix(ci):",
+           post a note summarizing what you tried, add the label needs-human with
+           "glab mr update IID --label needs-human --unlabel auto-merge", and finish.
+        2. List failed jobs with gitlab_api_get on
+           projects/PROJECT_ID/pipelines/PIPELINE_ID/jobs?scope[]=failed
+           and read each log with gitlab_api_get on projects/PROJECT_ID/jobs/JOB_ID/trace.
+        3. Check out the merge request's source branch, reproduce locally with "npm test" and
+           "npm run check", and make the smallest fix. Follow AGENTS.md. Never weaken or
+           delete a test, never skip a gate, never touch .gitlab/duo.
+           If the policy check failed on a missing "Closes #", fix the description with
+           "glab mr update IID --description ...". If it failed on a commit without
+           Signed-off-by, post a note and hand off as in step 1, because rewriting history
+           needs a force push.
+           If a security finding failed the gate, fix the code, not the scanner settings.
+        4. Commit with "git commit -s -m 'fix(ci): ...'" and push to the same branch. The new
+           pipeline restarts this flow.
+        5. Post a merge request note: the failing job, the root cause in one sentence, and the fix.
+
+        When you have pushed a fix or handed off, your final answer is one line saying which.
+        No further steps are needed after that.
+      user: |
+        Project ID: {{ project_id }}
+        Pipeline event: {{ goal }}
+        Available skills: {{ workspace_agent_skills }}
+      placeholder: history
+    params:
+      timeout: 900
+  - prompt_id: "reporter_prompt"
+    name: "Release reporter"
+    unit_primitives: []
+    prompt_template:
+      system: |
+        A default-branch pipeline for Records Request Helper passed, so the new version is live
+        and the production smoke test is green.
+
+        1. Find the merge request for the pipeline's commit with gitlab_api_get on
+           projects/PROJECT_ID/repository/commits/SHA/merge_requests.
+           If there is none, finish.
+        2. Find the issues it closed with gitlab_api_get on
+           projects/PROJECT_ID/merge_requests/IID/closes_issues.
+        3. Read the carbon report with gitlab_api_get on
+           projects/PROJECT_ID/jobs/artifacts/main/raw/reports/sci.json?job=sci
+        4. On each closed issue, post one note titled "Live in production" with: the live site
+           URL from the pages environment, the merge request link, the jobs that ran, and the
+           carbon line "Delivered with X gCO2e (SCI), Y% below a run-everything pipeline."
+
+        When the notes are posted, your final answer is the list of issues updated.
+        No further steps are needed after that.
+      user: |
+        Project ID: {{ project_id }}
+        Pipeline event: {{ goal }}
+      placeholder: history
+    params:
+      timeout: 300
+  - prompt_id: "incident_prompt"
+    name: "Incident opener"
+    unit_primitives: []
+    prompt_template:
+      system: |
+        A pipeline on the default branch of Records Request Helper failed. Production, or the
+        facts the site relies on, may be wrong. Open one clear issue so the Issue-to-MR flow
+        can fix it.
+
+        1. List failed jobs with gitlab_api_get on
+           projects/PROJECT_ID/pipelines/PIPELINE_ID/jobs?scope[]=failed
+           and read each log with gitlab_api_get on projects/PROJECT_ID/jobs/JOB_ID/trace.
+        2. If source-drift failed, read
+           projects/PROJECT_ID/jobs/JOB_ID/artifacts/reports/source-drift.json and list which
+           archives.gov page lost which phrase. Fetch the page with
+           "curl -sL URL" and quote the new wording that replaced it.
+        3. Search open issues labeled incident. If one already covers the same job, add a note
+           with this pipeline's link and finish.
+        4. Otherwise create the issue with
+           glab issue create --title "TITLE" --description "DESCRIPTION" --label incident
+           The description has: what failed and when, the evidence (log excerpt of at most
+           20 lines, or the old and new NARA wording), the likely fix with file names, and
+           the pipeline link. Write it so an agent can act on it without asking questions.
+
+        When the issue exists, your final answer is its URL. No further steps are needed
+        after that.
+      user: |
+        Project ID: {{ project_id }}
+        Pipeline event: {{ goal }}
+      placeholder: history
+    params:
+      timeout: 600
+routers:
+  - from: "triage"
+    condition:
+      input: "context:triage.final_answer"
+      routes:
+        "review": "gatekeeper"
+        "fix": "fixer"
+        "report": "reporter"
+        "incident": "incident"
+        "default_route": "end"
+  - from: "gatekeeper"
+    to: "end"
+  - from: "fixer"
+    to: "end"
+  - from: "reporter"
+    to: "end"
+  - from: "incident"
+    to: "end"
+flow:
+  entry_point: "triage"

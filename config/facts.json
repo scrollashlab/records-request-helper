@@ -1,0 +1,37 @@
+{
+  "version": "2026.10.11",
+  "lastChecked": "2026-10-11",
+  "archivalYears": 62,
+  "fees": {
+    "archivalUpTo5Pages": 25,
+    "archival6PagesOrMore": 70,
+    "nonArchivalVeteranOrNextOfKin": 0
+  },
+  "nextOfKin": ["surviving spouse who has not remarried", "father", "mother", "son", "daughter", "sister", "brother"],
+  "fire1973": [
+    { "branch": "army", "from": "1912-11-01", "to": "1960-01-01", "loss": "about 80%" },
+    { "branch": "air_force", "from": "1947-09-25", "to": "1964-01-01", "loss": "about 75%", "surnameAfter": "Hubbard, James E." }
+  ],
+  "nprc": {
+    "mail": ["National Personnel Records Center", "Military Personnel Records", "1 Archives Drive", "St. Louis, MO 63138"],
+    "fax": "314-801-9195",
+    "phone": "314-801-0800",
+    "followUpAfterDays": 90
+  },
+  "links": {
+    "request": "https://www.archives.gov/veterans/military-service-records",
+    "sf180": "https://www.archives.gov/veterans/military-service-records/standard-form-180.html",
+    "fire": "https://www.archives.gov/personnel-records-center/fire-1973",
+    "publicAccess": "https://www.archives.gov/personnel-records-center/ompf-access-public"
+  },
+  "sources": [
+    {
+      "url": "https://www.archives.gov/veterans/military-service-records",
+      "mustContain": ["62 years", "$25 flat fee", "$70 flat fee", "1 Archives Drive", "314-801-9195", "Surviving spouse who has not remarried"]
+    },
+    {
+      "url": "https://www.archives.gov/personnel-records-center/fire-1973",
+      "mustContain": ["November 1, 1912 to January 1, 1960", "September 25, 1947 to January 1, 1964", "Hubbard, James E."]
+    }
+  ]
+}
