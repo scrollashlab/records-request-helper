@@ -85,8 +85,9 @@ Software Foundation formula (ISO/IEC 21031:2024): SCI = ((E × I) + M) per R, wh
 pipeline run.
 
 - **E** is runner energy, from each job's measured duration and Cloud Carbon Footprint
-  coefficients for a GitLab-hosted Linux runner with 2 vCPUs and 8 GB of memory (0.71 to 4.26 W per
-  vCPU at 50% load, 0.000392 kWh per GB-hour of memory, PUE 1.1).
+  coefficients for a GitLab-hosted Linux runner with 2 vCPUs and 8 GB of memory (0.71 W idle to
+  4.26 W at full load per vCPU, averaged at an assumed 50% load; 0.000392 kWh per GB-hour of memory;
+  PUE 1.1).
 - **I** is 576 gCO2e per kWh, Google's published grid intensity for us-east1, where GitLab's hosted
   runners run.
 - **M** is embodied emissions: 1,000 kgCO2e per server over four years, shared by vCPU.
