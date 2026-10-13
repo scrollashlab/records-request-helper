@@ -38,6 +38,11 @@ include:
   - template: Jobs/SAST.gitlab-ci.yml
   - template: Jobs/Secret-Detection.gitlab-ci.yml
 
+# Templates default to stage `test`; remap the hidden parent jobs into our lifecycle.
+sast:
+  stage: secure
+
+
 # Jobs run only when files they check have changed. Every skipped job is
 # counted as saved carbon by the sci job.
 .code-changes: &code-changes
